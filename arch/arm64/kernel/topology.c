@@ -11,646 +11,338 @@
  * for more details.
  */
 
-#include <linux/cpu.h>
-#include <linux/cpumask.h>
+#include <linux/acpi.h>
+#include <linux/arch_topology.h>
+#include <linux/cacheinfo.h>
+#include <linux/cpufreq.h>
 #include <linux/init.h>
 #include <linux/percpu.h>
-#include <linux/node.h>
-#include <linux/nodemask.h>
-#include <linux/of.h>
-#include <linux/sched.h>
-#include <linux/slab.h>
 
+#include <asm/cpu.h>
 #include <asm/cputype.h>
 #include <asm/topology.h>
 
+#ifdef CONFIG_ACPI
+static bool __init acpi_cpu_is_threaded(int cpu)
+{
+	int is_threaded = acpi_pptt_cpu_is_thread(cpu);
+
+	/*
+	 * if the PPTT doesn't have thread information, assume a homogeneous
+	 * machine and return the current CPU's thread state.
+	 */
+	if (is_threaded < 0)
+		is_threaded = read_cpuid_mpidr() & MPIDR_MT_BITMASK;
+
+	return !!is_threaded;
+}
+
 /*
- * cpu capacity scale management
+ * Propagate the topology information of the processor_topology_node tree to the
+ * cpu_topology array.
  */
-
-/*
- * cpu capacity table
- * This per cpu data structure describes the relative capacity of each core.
- * On a heteregenous system, cores don't have the same computation capacity
- * and we reflect that difference in the cpu_capacity field so the scheduler
- * can take this difference into account during load balance. A per cpu
- * structure is preferred because each CPU updates its own cpu_capacity field
- * during the load balance except for idle cores. One idle core is selected
- * to run the rebalance_domains for all idle cores and the cpu_capacity can be
- * updated during this sequence.
- */
-static DEFINE_PER_CPU(unsigned long, cpu_scale);
-
-unsigned long arch_scale_cpu_capacity(struct sched_domain *sd, int cpu)
+int __init parse_acpi_topology(void)
 {
-	return per_cpu(cpu_scale, cpu);
-}
+	int cpu, topology_id;
 
-unsigned long arch_get_max_cpu_capacity(int cpu)
-{
-	return per_cpu(cpu_scale, cpu);
-}
-
-static void set_capacity_scale(unsigned int cpu, unsigned long capacity)
-{
-	per_cpu(cpu_scale, cpu) = capacity;
-}
-
-static int __init get_cpu_for_node(struct device_node *node)
-{
-	struct device_node *cpu_node;
-	int cpu;
-
-	cpu_node = of_parse_phandle(node, "cpu", 0);
-	if (!cpu_node)
-		return -1;
+	if (acpi_disabled)
+		return 0;
 
 	for_each_possible_cpu(cpu) {
-		if (of_get_cpu_node(cpu, NULL) == cpu_node) {
-			of_node_put(cpu_node);
-			return cpu;
+		topology_id = find_acpi_cpu_topology(cpu, 0);
+		if (topology_id < 0)
+			return topology_id;
+
+		if (acpi_cpu_is_threaded(cpu)) {
+			cpu_topology[cpu].thread_id = topology_id;
+			topology_id = find_acpi_cpu_topology(cpu, 1);
+			cpu_topology[cpu].core_id   = topology_id;
+		} else {
+			cpu_topology[cpu].thread_id  = -1;
+			cpu_topology[cpu].core_id    = topology_id;
 		}
+		topology_id = find_acpi_cpu_topology_cluster(cpu);
+		cpu_topology[cpu].cluster_id = topology_id;
+		topology_id = find_acpi_cpu_topology_package(cpu);
+		cpu_topology[cpu].package_id = topology_id;
 	}
 
-	pr_crit("Unable to find CPU node for %s\n", cpu_node->full_name);
+	return 0;
+}
+#endif
 
-	of_node_put(cpu_node);
-	return -1;
+#ifdef CONFIG_ARM64_AMU_EXTN
+#define read_corecnt()	read_sysreg_s(SYS_AMEVCNTR0_CORE_EL0)
+#define read_constcnt()	read_sysreg_s(SYS_AMEVCNTR0_CONST_EL0)
+#else
+#define read_corecnt()	(0UL)
+#define read_constcnt()	(0UL)
+#endif
+
+#undef pr_fmt
+#define pr_fmt(fmt) "AMU: " fmt
+
+static DEFINE_PER_CPU_READ_MOSTLY(unsigned long, arch_max_freq_scale);
+static DEFINE_PER_CPU(u64, arch_const_cycles_prev);
+static DEFINE_PER_CPU(u64, arch_core_cycles_prev);
+static cpumask_var_t amu_fie_cpus;
+
+void update_freq_counters_refs(void)
+{
+	this_cpu_write(arch_core_cycles_prev, read_corecnt());
+	this_cpu_write(arch_const_cycles_prev, read_constcnt());
 }
 
-static int __init parse_core(struct device_node *core, int cluster_id,
-			     int core_id)
+static inline bool freq_counters_valid(int cpu)
 {
-	char name[10];
-	bool leaf = true;
-	int i = 0;
-	int cpu;
-	struct device_node *t;
+	if ((cpu >= nr_cpu_ids) || !cpumask_test_cpu(cpu, cpu_present_mask))
+		return false;
 
-	do {
-		snprintf(name, sizeof(name), "thread%d", i);
-		t = of_get_child_by_name(core, name);
-		if (t) {
-			leaf = false;
-			cpu = get_cpu_for_node(t);
-			if (cpu >= 0) {
-				cpu_topology[cpu].cluster_id = cluster_id;
-				cpu_topology[cpu].core_id = core_id;
-				cpu_topology[cpu].thread_id = i;
-			} else {
-				pr_err("%s: Can't get CPU for thread\n",
-				       t->full_name);
-				of_node_put(t);
-				return -EINVAL;
-			}
-			of_node_put(t);
-		}
-		i++;
-	} while (t);
+	if (!cpu_has_amu_feat(cpu)) {
+		pr_debug("CPU%d: counters are not supported.\n", cpu);
+		return false;
+	}
 
-	cpu = get_cpu_for_node(core);
-	if (cpu >= 0) {
-		if (!leaf) {
-			pr_err("%s: Core has both threads and CPU\n",
-			       core->full_name);
-			return -EINVAL;
-		}
+	if (unlikely(!per_cpu(arch_const_cycles_prev, cpu) ||
+		     !per_cpu(arch_core_cycles_prev, cpu))) {
+		pr_debug("CPU%d: cycle counters are not enabled.\n", cpu);
+		return false;
+	}
 
-		cpu_topology[cpu].cluster_id = cluster_id;
-		cpu_topology[cpu].core_id = core_id;
-	} else if (leaf) {
-		pr_err("%s: Can't get CPU for leaf core\n", core->full_name);
+	return true;
+}
+
+static int freq_inv_set_max_ratio(int cpu, u64 max_rate, u64 ref_rate)
+{
+	u64 ratio;
+
+	if (unlikely(!max_rate || !ref_rate)) {
+		pr_debug("CPU%d: invalid maximum or reference frequency.\n",
+			 cpu);
 		return -EINVAL;
 	}
 
-	return 0;
-}
-
-static int __init parse_cluster(struct device_node *cluster, int depth)
-{
-	char name[10];
-	bool leaf = true;
-	bool has_cores = false;
-	struct device_node *c;
-	static int cluster_id __initdata;
-	int core_id = 0;
-	int i, ret;
-
 	/*
-	 * First check for child clusters; we currently ignore any
-	 * information about the nesting of clusters and present the
-	 * scheduler with a flat list of them.
+	 * Pre-compute the fixed ratio between the frequency of the constant
+	 * reference counter and the maximum frequency of the CPU.
+	 *
+	 *			    ref_rate
+	 * arch_max_freq_scale =   ---------- * SCHED_CAPACITY_SCALE²
+	 *			    max_rate
+	 *
+	 * We use a factor of 2 * SCHED_CAPACITY_SHIFT -> SCHED_CAPACITY_SCALE²
+	 * in order to ensure a good resolution for arch_max_freq_scale for
+	 * very low reference frequencies (down to the KHz range which should
+	 * be unlikely).
 	 */
-	i = 0;
-	do {
-		snprintf(name, sizeof(name), "cluster%d", i);
-		c = of_get_child_by_name(cluster, name);
-		if (c) {
-			leaf = false;
-			ret = parse_cluster(c, depth + 1);
-			of_node_put(c);
-			if (ret != 0)
-				return ret;
-		}
-		i++;
-	} while (c);
-
-	/* Now check for cores */
-	i = 0;
-	do {
-		snprintf(name, sizeof(name), "core%d", i);
-		c = of_get_child_by_name(cluster, name);
-		if (c) {
-			has_cores = true;
-
-			if (depth == 0) {
-				pr_err("%s: cpu-map children should be clusters\n",
-				       c->full_name);
-				of_node_put(c);
-				return -EINVAL;
-			}
-
-			if (leaf) {
-				ret = parse_core(c, cluster_id, core_id++);
-			} else {
-				pr_err("%s: Non-leaf cluster with core %s\n",
-				       cluster->full_name, name);
-				ret = -EINVAL;
-			}
-
-			of_node_put(c);
-			if (ret != 0)
-				return ret;
-		}
-		i++;
-	} while (c);
-
-	if (leaf && !has_cores)
-		pr_warn("%s: empty cluster\n", cluster->full_name);
-
-	if (leaf)
-		cluster_id++;
-
-	return 0;
-}
-
-struct cpu_efficiency {
-	const char *compatible;
-	unsigned long efficiency;
-};
-
-/*
- * Table of relative efficiency of each processors
- * The efficiency value must fit in 20bit and the final
- * cpu_scale value must be in the range
- *   0 < cpu_scale < SCHED_CAPACITY_SCALE.
- * Processors that are not defined in the table,
- * use the default SCHED_CAPACITY_SCALE value for cpu_scale.
- */
-static const struct cpu_efficiency table_efficiency[] = {
-	{ "arm,cortex-a72", 4186 },
-	{ "arm,cortex-a57", 3891 },
-	{ "arm,cortex-a53", 2048 },
-	{ NULL, },
-};
-
-static unsigned long *__cpu_capacity;
-#define cpu_capacity(cpu)	__cpu_capacity[cpu]
-
-static unsigned long max_cpu_perf, min_cpu_perf;
-
-static int __init parse_dt_topology(void)
-{
-	struct device_node *cn, *map;
-	int ret = 0;
-	int cpu;
-
-	cn = of_find_node_by_path("/cpus");
-	if (!cn) {
-		pr_err("No CPU information found in DT\n");
-		return 0;
+	ratio = ref_rate << (2 * SCHED_CAPACITY_SHIFT);
+	ratio = div64_u64(ratio, max_rate);
+	if (!ratio) {
+		WARN_ONCE(1, "Reference frequency too low.\n");
+		return -EINVAL;
 	}
 
+	per_cpu(arch_max_freq_scale, cpu) = (unsigned long)ratio;
+
+	return 0;
+}
+
+static void amu_scale_freq_tick(void)
+{
+	u64 prev_core_cnt, prev_const_cnt;
+	u64 core_cnt, const_cnt, scale;
+
+	prev_const_cnt = this_cpu_read(arch_const_cycles_prev);
+	prev_core_cnt = this_cpu_read(arch_core_cycles_prev);
+
+	update_freq_counters_refs();
+
+	const_cnt = this_cpu_read(arch_const_cycles_prev);
+	core_cnt = this_cpu_read(arch_core_cycles_prev);
+
+	if (unlikely(core_cnt <= prev_core_cnt ||
+		     const_cnt <= prev_const_cnt))
+		return;
+
 	/*
-	 * When topology is provided cpu-map is essentially a root
-	 * cluster with restricted subnodes.
+	 *	    /\core    arch_max_freq_scale
+	 * scale =  ------- * --------------------
+	 *	    /\const   SCHED_CAPACITY_SCALE
+	 *
+	 * See validate_cpu_freq_invariance_counters() for details on
+	 * arch_max_freq_scale and the use of SCHED_CAPACITY_SHIFT.
 	 */
-	map = of_get_child_by_name(cn, "cpu-map");
-	if (!map)
-		goto out;
+	scale = core_cnt - prev_core_cnt;
+	scale *= this_cpu_read(arch_max_freq_scale);
+	scale = div64_u64(scale >> SCHED_CAPACITY_SHIFT,
+			  const_cnt - prev_const_cnt);
 
-	ret = parse_cluster(map, 0);
-	if (ret != 0)
-		goto out_map;
+	scale = min_t(unsigned long, scale, SCHED_CAPACITY_SCALE);
+	this_cpu_write(arch_freq_scale, (unsigned long)scale);
+}
+
+static struct scale_freq_data amu_sfd = {
+	.source = SCALE_FREQ_SOURCE_ARCH,
+	.set_freq_scale = amu_scale_freq_tick,
+};
+
+static void amu_fie_setup(const struct cpumask *cpus)
+{
+	int cpu;
+
+	/* We are already set since the last insmod of cpufreq driver */
+	if (unlikely(cpumask_subset(cpus, amu_fie_cpus)))
+		return;
+
+	for_each_cpu(cpu, cpus) {
+		if (!freq_counters_valid(cpu) ||
+		    freq_inv_set_max_ratio(cpu,
+					   cpufreq_get_hw_max_freq(cpu) * 1000ULL,
+					   arch_timer_get_rate()))
+			return;
+	}
+
+	cpumask_or(amu_fie_cpus, amu_fie_cpus, cpus);
+
+	topology_set_scale_freq_source(&amu_sfd, amu_fie_cpus);
+
+	pr_debug("CPUs[%*pbl]: counters will be used for FIE.",
+		 cpumask_pr_args(cpus));
+}
+
+static int init_amu_fie_callback(struct notifier_block *nb, unsigned long val,
+				 void *data)
+{
+	struct cpufreq_policy *policy = data;
+
+	if (val == CPUFREQ_CREATE_POLICY)
+		amu_fie_setup(policy->related_cpus);
 
 	/*
-	 * Check that all cores are in the topology; the SMP code will
-	 * only mark cores described in the DT as possible.
+	 * We don't need to handle CPUFREQ_REMOVE_POLICY event as the AMU
+	 * counters don't have any dependency on cpufreq driver once we have
+	 * initialized AMU support and enabled invariance. The AMU counters will
+	 * keep on working just fine in the absence of the cpufreq driver, and
+	 * for the CPUs for which there are no counters available, the last set
+	 * value of arch_freq_scale will remain valid as that is the frequency
+	 * those CPUs are running at.
 	 */
-	for_each_possible_cpu(cpu)
-		if (cpu_topology[cpu].cluster_id == -1)
-			ret = -EINVAL;
 
-out_map:
-	of_node_put(map);
-out:
-	of_node_put(cn);
+	return 0;
+}
+
+static struct notifier_block init_amu_fie_notifier = {
+	.notifier_call = init_amu_fie_callback,
+};
+
+static int __init init_amu_fie(void)
+{
+	int ret;
+
+	if (!zalloc_cpumask_var(&amu_fie_cpus, GFP_KERNEL))
+		return -ENOMEM;
+
+	ret = cpufreq_register_notifier(&init_amu_fie_notifier,
+					CPUFREQ_POLICY_NOTIFIER);
+	if (ret)
+		free_cpumask_var(amu_fie_cpus);
+
+	return ret;
+}
+core_initcall(init_amu_fie);
+
+#ifdef CONFIG_ACPI_CPPC_LIB
+#include <acpi/cppc_acpi.h>
+
+static void cpu_read_corecnt(void *val)
+{
+	/*
+	 * A value of 0 can be returned if the current CPU does not support AMUs
+	 * or if the counter is disabled for this CPU. A return value of 0 at
+	 * counter read is properly handled as an error case by the users of the
+	 * counter.
+	 */
+	*(u64 *)val = read_corecnt();
+}
+
+static void cpu_read_constcnt(void *val)
+{
+	/*
+	 * Return 0 if the current CPU is affected by erratum 2457168. A value
+	 * of 0 is also returned if the current CPU does not support AMUs or if
+	 * the counter is disabled. A return value of 0 at counter read is
+	 * properly handled as an error case by the users of the counter.
+	 */
+	*(u64 *)val = this_cpu_has_cap(ARM64_WORKAROUND_2457168) ?
+		      0UL : read_constcnt();
+}
+
+static inline
+int counters_read_on_cpu(int cpu, smp_call_func_t func, u64 *val)
+{
+	/*
+	 * Abort call on counterless CPU or when interrupts are
+	 * disabled - can lead to deadlock in smp sync call.
+	 */
+	if (!cpu_has_amu_feat(cpu))
+		return -EOPNOTSUPP;
+
+	if (WARN_ON_ONCE(irqs_disabled()))
+		return -EPERM;
+
+	smp_call_function_single(cpu, func, val, 1);
+
+	return 0;
+}
+
+/*
+ * Refer to drivers/acpi/cppc_acpi.c for the description of the functions
+ * below.
+ */
+bool cpc_ffh_supported(void)
+{
+	int cpu = get_cpu_with_amu_feat();
+
+	/*
+	 * FFH is considered supported if there is at least one present CPU that
+	 * supports AMUs. Using FFH to read core and reference counters for CPUs
+	 * that do not support AMUs, have counters disabled or that are affected
+	 * by errata, will result in a return value of 0.
+	 *
+	 * This is done to allow any enabled and valid counters to be read
+	 * through FFH, knowing that potentially returning 0 as counter value is
+	 * properly handled by the users of these counters.
+	 */
+	if ((cpu >= nr_cpu_ids) || !cpumask_test_cpu(cpu, cpu_present_mask))
+		return false;
+
+	return true;
+}
+
+int cpc_read_ffh(int cpu, struct cpc_reg *reg, u64 *val)
+{
+	int ret = -EOPNOTSUPP;
+
+	switch ((u64)reg->address) {
+	case 0x0:
+		ret = counters_read_on_cpu(cpu, cpu_read_corecnt, val);
+		break;
+	case 0x1:
+		ret = counters_read_on_cpu(cpu, cpu_read_constcnt, val);
+		break;
+	}
+
+	if (!ret) {
+		*val &= GENMASK_ULL(reg->bit_offset + reg->bit_width - 1,
+				    reg->bit_offset);
+		*val >>= reg->bit_offset;
+	}
+
 	return ret;
 }
 
-/*
- * Look for a customed capacity of a CPU in the cpu_capacity table during the
- * boot. The update of all CPUs is in O(n^2) for heteregeneous system but the
- * function returns directly for SMP systems or if there is no complete set
- * of cpu efficiency, clock frequency data for each cpu.
- */
-static void update_cpu_capacity(unsigned int cpu)
+int cpc_write_ffh(int cpunum, struct cpc_reg *reg, u64 val)
 {
-	unsigned long capacity = cpu_capacity(cpu);
-
-	if (!capacity || !max_cpu_perf) {
-		cpu_capacity(cpu) = 0;
-		return;
-	}
-
-	capacity *= SCHED_CAPACITY_SCALE;
-	capacity /= max_cpu_perf;
-
-	set_capacity_scale(cpu, capacity);
-
-	pr_info("CPU%u: update cpu_capacity %lu\n",
-		cpu, arch_scale_cpu_capacity(NULL, cpu));
+	return -EOPNOTSUPP;
 }
-
-/*
- * Scheduler load-tracking scale-invariance
- *
- * Provides the scheduler with a scale-invariance correction factor that
- * compensates for frequency scaling.
- */
-
-static DEFINE_PER_CPU(atomic_long_t, cpu_freq_capacity);
-static DEFINE_PER_CPU(atomic_long_t, cpu_max_freq);
-
-/* cpufreq callback function setting current cpu frequency */
-void arch_scale_set_curr_freq(int cpu, unsigned long freq)
-{
-	unsigned long max = atomic_long_read(&per_cpu(cpu_max_freq, cpu));
-	unsigned long curr;
-
-	if (!max)
-		return;
-
-	curr = (freq * SCHED_CAPACITY_SCALE) / max;
-
-	atomic_long_set(&per_cpu(cpu_freq_capacity, cpu), curr);
-}
-
-/* cpufreq callback function setting max cpu frequency */
-void arch_scale_set_max_freq(int cpu, unsigned long freq)
-{
-	atomic_long_set(&per_cpu(cpu_max_freq, cpu), freq);
-}
-
-unsigned long arch_scale_freq_capacity(struct sched_domain *sd, int cpu)
-{
-	unsigned long curr = atomic_long_read(&per_cpu(cpu_freq_capacity, cpu));
-
-	if (!curr)
-		return SCHED_CAPACITY_SCALE;
-
-	return curr;
-}
-
-static void __init parse_dt_cpu_capacity(void)
-{
-	const struct cpu_efficiency *cpu_eff;
-	struct device_node *cn = NULL;
-	int cpu = 0, i = 0;
-
-	__cpu_capacity = kcalloc(nr_cpu_ids, sizeof(*__cpu_capacity),
-				 GFP_NOWAIT);
-
-	min_cpu_perf = ULONG_MAX;
-	max_cpu_perf = 0;
-
-	for_each_possible_cpu(cpu) {
-		const u32 *rate;
-		int len;
-		unsigned long cpu_perf;
-
-		/* too early to use cpu->of_node */
-		cn = of_get_cpu_node(cpu, NULL);
-		if (!cn) {
-			pr_err("missing device node for CPU %d\n", cpu);
-			continue;
-		}
-
-		for (cpu_eff = table_efficiency; cpu_eff->compatible; cpu_eff++)
-			if (of_device_is_compatible(cn, cpu_eff->compatible))
-				break;
-
-		if (cpu_eff->compatible == NULL)
-			continue;
-
-		rate = of_get_property(cn, "clock-frequency", &len);
-		if (!rate || len != 4) {
-			pr_err("%s missing clock-frequency property\n",
-				cn->full_name);
-			continue;
-		}
-
-		cpu_perf = ((be32_to_cpup(rate)) >> 20) * cpu_eff->efficiency;
-		cpu_capacity(cpu) = cpu_perf;
-		max_cpu_perf = max(max_cpu_perf, cpu_perf);
-		min_cpu_perf = min(min_cpu_perf, cpu_perf);
-		i++;
-	}
-
-	if (i < num_possible_cpus()) {
-		max_cpu_perf = 0;
-		min_cpu_perf = 0;
-	}
-}
-
-/*
- * cpu topology table
- */
-struct cpu_topology cpu_topology[NR_CPUS];
-EXPORT_SYMBOL_GPL(cpu_topology);
-
-const struct cpumask *cpu_coregroup_mask(int cpu)
-{
-	return &cpu_topology[cpu].core_sibling;
-}
-
-static void update_siblings_masks(unsigned int cpuid)
-{
-	struct cpu_topology *cpu_topo, *cpuid_topo = &cpu_topology[cpuid];
-	int cpu;
-
-	/* update core and thread sibling masks */
-	for_each_possible_cpu(cpu) {
-		cpu_topo = &cpu_topology[cpu];
-
-		if (cpuid_topo->cluster_id != cpu_topo->cluster_id)
-			continue;
-
-		cpumask_set_cpu(cpuid, &cpu_topo->core_sibling);
-		if (cpu != cpuid)
-			cpumask_set_cpu(cpu, &cpuid_topo->core_sibling);
-
-		if (cpuid_topo->core_id != cpu_topo->core_id)
-			continue;
-
-		cpumask_set_cpu(cpuid, &cpu_topo->thread_sibling);
-		if (cpu != cpuid)
-			cpumask_set_cpu(cpu, &cpuid_topo->thread_sibling);
-	}
-}
-
-void store_cpu_topology(unsigned int cpuid)
-{
-	struct cpu_topology *cpuid_topo = &cpu_topology[cpuid];
-	u64 mpidr;
-
-	if (cpuid_topo->cluster_id != -1)
-		goto topology_populated;
-
-	mpidr = read_cpuid_mpidr();
-
-	/* Uniprocessor systems can rely on default topology values */
-	if (mpidr & MPIDR_UP_BITMASK)
-		return;
-
-	/* Create cpu topology mapping based on MPIDR. */
-	if (mpidr & MPIDR_MT_BITMASK) {
-		/* Multiprocessor system : Multi-threads per core */
-		cpuid_topo->thread_id  = MPIDR_AFFINITY_LEVEL(mpidr, 0);
-		cpuid_topo->core_id    = MPIDR_AFFINITY_LEVEL(mpidr, 1);
-		cpuid_topo->cluster_id = MPIDR_AFFINITY_LEVEL(mpidr, 2);
-	} else {
-		/* Multiprocessor system : Single-thread per core */
-		cpuid_topo->thread_id  = -1;
-		cpuid_topo->core_id    = MPIDR_AFFINITY_LEVEL(mpidr, 0);
-		cpuid_topo->cluster_id = MPIDR_AFFINITY_LEVEL(mpidr, 1);
-	}
-#ifndef CONFIG_SCHED_HMP
-	cpuid_topo->partno = read_cpuid_part_number();
-#endif
-
-	pr_debug("CPU%u: cluster %d core %d thread %d mpidr %#016llx\n",
-		 cpuid, cpuid_topo->cluster_id, cpuid_topo->core_id,
-		 cpuid_topo->thread_id, mpidr);
-
-topology_populated:
-#ifdef CONFIG_SCHED_HMP
-	cpuid_topo->partno = read_cpuid_part_number();
-#endif
-	update_siblings_masks(cpuid);
-	update_cpu_capacity(cpuid);
-}
-
-static void __init reset_cpu_topology(void)
-{
-	unsigned int cpu;
-
-	for_each_possible_cpu(cpu) {
-		struct cpu_topology *cpu_topo = &cpu_topology[cpu];
-
-		cpu_topo->thread_id = -1;
-		cpu_topo->core_id = 0;
-		cpu_topo->cluster_id = -1;
-
-		cpumask_clear(&cpu_topo->core_sibling);
-		cpumask_set_cpu(cpu, &cpu_topo->core_sibling);
-		cpumask_clear(&cpu_topo->thread_sibling);
-		cpumask_set_cpu(cpu, &cpu_topo->thread_sibling);
-
-		set_capacity_scale(cpu, SCHED_CAPACITY_SCALE);
-	}
-}
-
-static int cpu_topology_init;
-/*
- * init_cpu_topology is called at boot when only one cpu is running
- * which prevent simultaneous write access to cpu_topology array
- */
-
-/*
- * init_cpu_topology is called at boot when only one cpu is running
- * which prevent simultaneous write access to cpu_topology array
- */
-void __init init_cpu_topology(void)
-{
-	if (cpu_topology_init)
-		return;
-	reset_cpu_topology();
-
-	/*
-	 * Discard anything that was parsed if we hit an error so we
-	 * don't use partial information.
-	 */
-	if (parse_dt_topology())
-		reset_cpu_topology();
-
-	parse_dt_cpu_capacity();
-
-}
-
-#ifdef CONFIG_MTK_CPU_TOPOLOGY
-void __init arch_build_cpu_topology_domain(void)
-{
-	init_cpu_topology();
-	cpu_topology_init = 1;
-}
-
-#endif
-
-/*
- * Extras of CPU & Cluster functions
- */
-int arch_cpu_is_big(unsigned int cpu)
-{
-	struct cpu_topology *cpu_topo = &cpu_topology[cpu];
-
-	switch (cpu_topo->partno) {
-	case ARM_CPU_PART_CORTEX_A57:
-	case ARM_CPU_PART_CORTEX_A72:
-		return 1;
-	default:
-		return 0;
-	}
-}
-
-int arch_cpu_is_little(unsigned int cpu)
-{
-	return !arch_cpu_is_big(cpu);
-}
-
-int arch_is_smp(void)
-{
-	static int __arch_smp = -1;
-
-	if (__arch_smp != -1)
-		return __arch_smp;
-
-	__arch_smp = (max_cpu_perf != min_cpu_perf) ? 0 : 1;
-
-	return __arch_smp;
-}
-
-int arch_get_nr_clusters(void)
-{
-	static int __arch_nr_clusters = -1;
-	int max_id = 0;
-	unsigned int cpu;
-
-	if (__arch_nr_clusters != -1) {
-		return __arch_nr_clusters;
-	}
-
-	/* assume socket id is monotonic increasing without gap. */
-	for_each_possible_cpu(cpu) {
-		struct cpu_topology *cpu_topo = &cpu_topology[cpu];
-
-		if (cpu_topo->cluster_id > max_id)
-			max_id = cpu_topo->cluster_id;
-	}
-	__arch_nr_clusters = max_id + 1;
-	return __arch_nr_clusters;
-}
-
-int arch_is_multi_cluster(void)
-{
-	return arch_get_nr_clusters() > 1 ? 1 : 0;
-}
-
-int arch_get_cluster_id(unsigned int cpu)
-{
-	struct cpu_topology *cpu_topo = &cpu_topology[cpu];
-
-	return cpu_topo->cluster_id < 0 ? 0 : cpu_topo->cluster_id;
-}
-
-void arch_get_cluster_cpus(struct cpumask *cpus, int cluster_id)
-{
-	unsigned int cpu;
-
-	cpumask_clear(cpus);
-	for_each_possible_cpu(cpu) {
-		struct cpu_topology *cpu_topo = &cpu_topology[cpu];
-
-		if (cpu_topo->cluster_id == cluster_id)
-			cpumask_set_cpu(cpu, cpus);
-	}
-}
-
-int arch_better_capacity(unsigned int cpu)
-{
-	BUG_ON(cpu >= num_possible_cpus());
-	return cpu_capacity(cpu) > min_cpu_perf;
-}
-
-#ifdef CONFIG_SCHED_HMP
-void __init arch_get_fast_and_slow_cpus(struct cpumask *fast,
-			struct cpumask *slow)
-{
-	struct device_node *cn = NULL;
-	int cpu;
-
-	cpumask_clear(fast);
-	cpumask_clear(slow);
-
-	/* FIXME: temporarily use cluster id to identify cpumask */
-	arch_get_cluster_cpus(slow, 0);
-	arch_get_cluster_cpus(fast, 1);
-/*	for_each_possible_cpu(cpu) {
-		if (arch_cpu_is_little(cpu))
-			cpumask_set_cpu(cpu, slow);
-		else
-			cpumask_set_cpu(cpu, fast);
-	}
-*/
-	if (!cpumask_empty(fast) && !cpumask_empty(slow))
-		return;
-
-	/*
-	 * We didn't find both big and little cores so let's call all cores
-	 * fast as this will keep the system running, with all cores being
-	 * treated equal.
-	 */
-	cpumask_setall(fast);
-	cpumask_clear(slow);
-}
-
-struct cpumask hmp_fast_cpu_mask;
-struct cpumask hmp_slow_cpu_mask;
-
-void __init arch_get_hmp_domains(struct list_head *hmp_domains_list)
-{
-	struct hmp_domain *domain;
-
-	arch_get_fast_and_slow_cpus(&hmp_fast_cpu_mask, &hmp_slow_cpu_mask);
-
-	/*
-	 * Initialize hmp_domains
-	 * Must be ordered with respect to compute capacity.
-	 * Fastest domain at head of list.
-	 */
-	if (!cpumask_empty(&hmp_slow_cpu_mask)) {
-		domain = (struct hmp_domain *)
-			kmalloc(sizeof(struct hmp_domain), GFP_KERNEL);
-		cpumask_copy(&domain->possible_cpus, &hmp_slow_cpu_mask);
-		cpumask_and(&domain->cpus, cpu_online_mask, &domain->possible_cpus);
-		list_add(&domain->hmp_domains, hmp_domains_list);
-	}
-	domain = (struct hmp_domain *)
-		kmalloc(sizeof(struct hmp_domain), GFP_KERNEL);
-	cpumask_copy(&domain->possible_cpus, &hmp_fast_cpu_mask);
-	cpumask_and(&domain->cpus, cpu_online_mask, &domain->possible_cpus);
-	list_add(&domain->hmp_domains, hmp_domains_list);
-}
-#else
-void __init arch_get_hmp_domains(struct list_head *hmp_domains_list) {}
-#endif /* CONFIG_SCHED_HMP */
+#endif /* CONFIG_ACPI_CPPC_LIB */

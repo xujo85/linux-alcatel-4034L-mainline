@@ -746,7 +746,6 @@ endif
 export KBUILD_MODULES KBUILD_BUILTIN
 
 ifdef need-config
-include include/config/auto.conf
 endif
 
 ifeq ($(KBUILD_EXTMOD),)
@@ -780,7 +779,6 @@ ifdef may-sync-config
 # Read in dependencies to all Kconfig* files, make sure to run syncconfig if
 # changes are detected. This should be included after arch/$(SRCARCH)/Makefile
 # because some architectures define CROSS_COMPILE there.
-include include/config/auto.conf.cmd
 
 $(KCONFIG_CONFIG):
 	@echo >&2 '***'

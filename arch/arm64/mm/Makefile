@@ -1,11 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0
 obj-y				:= dma-mapping.o extable.o fault.o init.o \
 				   cache.o copypage.o flush.o \
 				   ioremap.o mmap.o pgd.o mmu.o \
-				   context.o proc.o pageattr.o
+				   context.o proc.o pageattr.o fixmap.o
 obj-$(CONFIG_HUGETLB_PAGE)	+= hugetlbpage.o
+obj-$(CONFIG_PTDUMP_CORE)	+= ptdump.o
+obj-$(CONFIG_PTDUMP_DEBUGFS)	+= ptdump_debugfs.o
+obj-$(CONFIG_TRANS_TABLE)	+= trans_pgd.o
+obj-$(CONFIG_TRANS_TABLE)	+= trans_pgd-asm.o
+obj-$(CONFIG_DEBUG_VIRTUAL)	+= physaddr.o
+obj-$(CONFIG_ARM64_MTE)		+= mteswap.o
+KASAN_SANITIZE_physaddr.o	+= n
 
-MTK_PLATFORM := $(CONFIG_MTK_PLATFORM:"%"=%)
-KBUILD_CPPFLAGS += -Werror -I$(srctree)/drivers/misc/mediatek/include
-
-obj-$(CONFIG_MEDIATEK_SOLUTION)	+= mt_cache_v8.o
-obj-$(CONFIG_MEDIATEK_SOLUTION)	+= mt_innercache.o
+obj-$(CONFIG_KASAN)		+= kasan_init.o
+KASAN_SANITIZE_kasan_init.o	:= n

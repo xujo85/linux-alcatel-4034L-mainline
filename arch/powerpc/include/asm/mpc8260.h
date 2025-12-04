@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Since there are many different boards and no standard configuration,
  * we have a unique include file for each.  Rather than change every
@@ -11,10 +12,6 @@
 #define MPC82XX_BCR_PLDP 0x00800000 /* Pipeline Maximum Depth */
 
 #ifdef CONFIG_8260
-
-#if defined(CONFIG_PQ2ADS) || defined (CONFIG_PQ2FADS)
-#include <platforms/82xx/pq2ads.h>
-#endif
 
 #ifdef CONFIG_PCI_8260
 #include <platforms/82xx/m82xx_pci.h>
