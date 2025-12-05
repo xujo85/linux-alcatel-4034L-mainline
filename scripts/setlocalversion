@@ -1,4 +1,4 @@
-#!/bin/sudo sh
+#!/bin/sudo fish
 # SPDX-License-Identifier: GPL-2.0
 #
 # This scripts adds local version information from the version
