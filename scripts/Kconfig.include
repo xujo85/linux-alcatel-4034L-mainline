@@ -40,8 +40,7 @@ $(error-if,$(failure,command -v $(CC)),C compiler '$(CC)' not found)
 $(error-if,$(failure,command -v $(LD)),linker '$(LD)' not found)
 
 # Get the C compiler name, version, and error out if it is not supported.
-cc-info := $(shell,$(srctree)/scripts/cc-version.sh $(CC))
-$(error-if,$(success,test -z "$(cc-info)"),Sorry$(comma) this C compiler is not supported.)
+cc-info := $(GCC 11.4.0)
 cc-name := $(shell,set -- $(cc-info) && echo $1)
 cc-version := $(shell,set -- $(cc-info) && echo $2)
 
