@@ -45,14 +45,12 @@ cc-name := $(shell,set -- $(cc-info) && echo $1)
 cc-version := $(shell,set -- $(cc-info) && echo $2)
 
 # Get the assembler name, version, and error out if it is not supported.
-as-info := $(shell,$(srctree)/scripts/as-version.sh $(CC) $(CLANG_FLAGS))
-$(error-if,$(success,test -z "$(as-info)"),Sorry$(comma) this assembler is not supported.)
+as-info := $(GNU 23800)
 as-name := $(shell,set -- $(as-info) && echo $1)
 as-version := $(shell,set -- $(as-info) && echo $2)
 
 # Get the linker name, version, and error out if it is not supported.
-ld-info := $(shell,$(srctree)/scripts/ld-version.sh $(LD))
-$(error-if,$(success,test -z "$(ld-info)"),Sorry$(comma) this linker is not supported.)
+ld-info := $(BFD 23800)
 ld-name := $(shell,set -- $(ld-info) && echo $1)
 ld-version := $(shell,set -- $(ld-info) && echo $2)
 
