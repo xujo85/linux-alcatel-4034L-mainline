@@ -21,14 +21,14 @@ config CC_IS_GCC
 
 config GCC_VERSION
 	int
-	default $(cc-version) if CC_IS_GCC default 0
+	default 11.4.0
 
 config CC_IS_CLANG
 	def_bool $(success,test "$(cc-name)" = Clang)
 
 config CLANG_VERSION
 	int
-	default $(cc-version) if CC_IS_CLANG default 0
+	default 14.0.0
 
 config AS_IS_GNU
 	def_bool $(success,test "$(as-name)" = GNU)
@@ -46,14 +46,14 @@ config LD_IS_BFD
 
 config LD_VERSION
 	int
-	default $(ld-version) if LD_IS_BFD default 0
+	default 2.38
 
 config LD_IS_LLD
 	def_bool $(success,test "$(ld-name)" = LLD)
 
 config LLD_VERSION
 	int
-	default $(ld-version) if LD_IS_LLD default 0
+	default 14.0.0
 
 config RUST_IS_AVAILABLE
 	def_bool $(success,$(srctree)/scripts/rust_is_available.sh)
@@ -95,7 +95,7 @@ config CC_HAS_NO_PROFILE_FN_ATTR
 
 config PAHOLE_VERSION
 	int
-	default $(v1.25)
+	default 1.25
 
 config CONSTRUCTORS
 	bool
