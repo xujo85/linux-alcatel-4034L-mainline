@@ -418,126 +418,12 @@ config ARCH_AIROHA
 # Kconfigs may be included either alphabetically (according to the
 # plat- suffix) or along side the corresponding mach-* source.
 #
-source "arch/arm/mach-actions/Kconfig"
-
-source "arch/arm/mach-alpine/Kconfig"
-
-source "arch/arm/mach-artpec/Kconfig"
-
-source "arch/arm/mach-asm9260/Kconfig"
-
-source "arch/arm/mach-aspeed/Kconfig"
-
-source "arch/arm/mach-at91/Kconfig"
-
-source "arch/arm/mach-axxia/Kconfig"
 
 source "arch/arm/mach-bcm/Kconfig"
 
-source "arch/arm/mach-berlin/Kconfig"
-
-source "arch/arm/mach-clps711x/Kconfig"
-
-source "arch/arm/mach-davinci/Kconfig"
-
-source "arch/arm/mach-digicolor/Kconfig"
-
-source "arch/arm/mach-dove/Kconfig"
-
-source "arch/arm/mach-ep93xx/Kconfig"
-
-source "arch/arm/mach-exynos/Kconfig"
-
-
-source "arch/arm/mach-gemini/Kconfig"
-
-source "arch/arm/mach-highbank/Kconfig"
-
-source "arch/arm/mach-hisi/Kconfig"
-
-source "arch/arm/mach-hpe/Kconfig"
-
-source "arch/arm/mach-imx/Kconfig"
-
-source "arch/arm/mach-ixp4xx/Kconfig"
-
-source "arch/arm/mach-keystone/Kconfig"
-
-source "arch/arm/mach-lpc32xx/Kconfig"
-
 source "arch/arm/mach-mediatek/Kconfig"
 
-source "arch/arm/mach-meson/Kconfig"
-
-source "arch/arm/mach-milbeaut/Kconfig"
-
-source "arch/arm/mach-mmp/Kconfig"
-
-source "arch/arm/mach-moxart/Kconfig"
-
-source "arch/arm/mach-mstar/Kconfig"
-
-source "arch/arm/mach-mv78xx0/Kconfig"
-
-source "arch/arm/mach-mvebu/Kconfig"
-
-source "arch/arm/mach-mxs/Kconfig"
-
-source "arch/arm/mach-nomadik/Kconfig"
-
-source "arch/arm/mach-npcm/Kconfig"
-
-source "arch/arm/mach-nspire/Kconfig"
-
-source "arch/arm/mach-omap1/Kconfig"
-
-source "arch/arm/mach-omap2/Kconfig"
-
-source "arch/arm/mach-orion5x/Kconfig"
-
-source "arch/arm/mach-pxa/Kconfig"
-
-source "arch/arm/mach-qcom/Kconfig"
-
-source "arch/arm/mach-rda/Kconfig"
-
 source "arch/arm/mach-realtek/Kconfig"
-
-source "arch/arm/mach-rpc/Kconfig"
-
-source "arch/arm/mach-rockchip/Kconfig"
-
-source "arch/arm/mach-s3c/Kconfig"
-
-source "arch/arm/mach-s5pv210/Kconfig"
-
-source "arch/arm/mach-sa1100/Kconfig"
-
-source "arch/arm/mach-shmobile/Kconfig"
-
-source "arch/arm/mach-socfpga/Kconfig"
-
-source "arch/arm/mach-spear/Kconfig"
-
-source "arch/arm/mach-sti/Kconfig"
-
-source "arch/arm/mach-stm32/Kconfig"
-
-source "arch/arm/mach-sunplus/Kconfig"
-
-source "arch/arm/mach-sunxi/Kconfig"
-
-source "arch/arm/mach-tegra/Kconfig"
-
-source "arch/arm/mach-uniphier/Kconfig"
-
-source "arch/arm/mach-ux500/Kconfig"
-
-source "arch/arm/mach-versatile/Kconfig"
-
-source "arch/arm/mach-vt8500/Kconfig"
-
-source "arch/arm/mach-zynq/Kconfig"
 
 # ARMv7-M architecture
 config ARCH_LPC18XX
