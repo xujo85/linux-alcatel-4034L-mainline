@@ -1344,8 +1344,8 @@ include/generated/utsrelease.h: include/config/kernel.release FORCE
 filechk_compile.h = $(srctree)/scripts/mkcompile_h \
 	"$(UTS_MACHINE)" "$(CONFIG_CC_VERSION_TEXT)" "$(LD)"
 
-include/generated/compile.h: FORCE
-	$(call filechk,compile.h)
+#include/generated/compile.h: FORCE
+#	$(call filechk,compile.h)
 
 PHONY += headerdep
 headerdep:
