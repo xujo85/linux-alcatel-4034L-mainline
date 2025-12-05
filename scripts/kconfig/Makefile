@@ -68,7 +68,7 @@ localyesconfig localmodconfig: $(obj)/conf
 #  syncconfig has become an internal implementation detail and is now
 #  deprecated for external use
 simple-targets := oldconfig allnoconfig allyesconfig allmodconfig \
-	alldefconfig randconfig listnewconfig olddefconfig syncconfig \
+	alldefconfig randconfig listnewconfig olddefconfig \
 	helpnewconfig yes2modconfig mod2yesconfig mod2noconfig
 
 PHONY += $(simple-targets)
