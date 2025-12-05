@@ -28,3 +28,4 @@ if [ "${pahole_ver}" -ge "125" ]; then
 fi
 
 echo ${extra_paholeopt}
+
