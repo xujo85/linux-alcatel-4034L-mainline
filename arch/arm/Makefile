@@ -167,65 +167,9 @@ textofs-$(CONFIG_ARCH_AXXIA) := 0x00308000
 # Machine directory name.  This list is sorted alphanumerically
 # by CONFIG_* macro name.
 machine-$(CONFIG_ARCH_ACTIONS)		+= actions
-machine-$(CONFIG_ARCH_AIROHA)		+= airoha
-machine-$(CONFIG_ARCH_ALPINE)		+= alpine
-machine-$(CONFIG_ARCH_ARTPEC)		+= artpec
-machine-$(CONFIG_ARCH_ASPEED)           += aspeed
-machine-$(CONFIG_ARCH_AT91)		+= at91
-machine-$(CONFIG_ARCH_AXXIA)		+= axxia
 machine-$(CONFIG_ARCH_BCM)		+= bcm
-machine-$(CONFIG_ARCH_BERLIN)		+= berlin
-machine-$(CONFIG_ARCH_CLPS711X)		+= clps711x
-machine-$(CONFIG_ARCH_DAVINCI)		+= davinci
-machine-$(CONFIG_ARCH_DIGICOLOR)	+= digicolor
-machine-$(CONFIG_ARCH_DOVE)		+= dove
-machine-$(CONFIG_ARCH_EP93XX)		+= ep93xx
-machine-$(CONFIG_ARCH_EXYNOS)		+= exynos
-machine-$(CONFIG_ARCH_FOOTBRIDGE)	+= footbridge
-machine-$(CONFIG_ARCH_GEMINI)		+= gemini
-machine-$(CONFIG_ARCH_HIGHBANK)		+= highbank
-machine-$(CONFIG_ARCH_HISI)		+= hisi
-machine-$(CONFIG_ARCH_HPE)		+= hpe
-machine-$(CONFIG_ARCH_IXP4XX)		+= ixp4xx
-machine-$(CONFIG_ARCH_KEYSTONE)		+= keystone
-machine-$(CONFIG_ARCH_LPC18XX)		+= lpc18xx
-machine-$(CONFIG_ARCH_LPC32XX)		+= lpc32xx
-machine-$(CONFIG_ARCH_MESON)		+= meson
-machine-$(CONFIG_ARCH_MMP)		+= mmp
-machine-$(CONFIG_ARCH_MOXART)		+= moxart
-machine-$(CONFIG_ARCH_MV78XX0)		+= mv78xx0
-machine-$(CONFIG_ARCH_MVEBU)		+= mvebu
-machine-$(CONFIG_ARCH_MXC)		+= imx
 machine-$(CONFIG_ARCH_MEDIATEK)		+= mediatek
-machine-$(CONFIG_ARCH_MILBEAUT)		+= milbeaut
-machine-$(CONFIG_ARCH_MXS)		+= mxs
-machine-$(CONFIG_ARCH_MSTARV7)		+= mstar
-machine-$(CONFIG_ARCH_NOMADIK)		+= nomadik
-machine-$(CONFIG_ARCH_NPCM)		+= npcm
-machine-$(CONFIG_ARCH_NSPIRE)		+= nspire
-machine-$(CONFIG_ARCH_OMAP1)		+= omap1
-machine-$(CONFIG_ARCH_OMAP2PLUS)	+= omap2
-machine-$(CONFIG_ARCH_ORION5X)		+= orion5x
-machine-$(CONFIG_ARCH_PXA)		+= pxa
-machine-$(CONFIG_ARCH_QCOM)		+= qcom
-machine-$(CONFIG_ARCH_REALTEK)		+= realtek
-machine-$(CONFIG_ARCH_ROCKCHIP)		+= rockchip
-machine-$(CONFIG_ARCH_RPC)		+= rpc
-machine-$(CONFIG_PLAT_SAMSUNG)		+= s3c
-machine-$(CONFIG_ARCH_S5PV210)		+= s5pv210
-machine-$(CONFIG_ARCH_SA1100)		+= sa1100
-machine-$(CONFIG_ARCH_RENESAS)	 	+= shmobile
-machine-$(CONFIG_ARCH_INTEL_SOCFPGA)	+= socfpga
-machine-$(CONFIG_ARCH_STI)		+= sti
-machine-$(CONFIG_ARCH_STM32)		+= stm32
-machine-$(CONFIG_ARCH_SUNPLUS)		+= sunplus
-machine-$(CONFIG_ARCH_SUNXI)		+= sunxi
-machine-$(CONFIG_ARCH_TEGRA)		+= tegra
-machine-$(CONFIG_ARCH_U8500)		+= ux500
-machine-$(CONFIG_ARCH_VT8500)		+= vt8500
-machine-$(CONFIG_ARCH_ZYNQ)		+= zynq
-machine-$(CONFIG_PLAT_VERSATILE)	+= versatile
-machine-$(CONFIG_PLAT_SPEAR)		+= spear
+
 
 # legacy platforms provide their own mach/*.h headers globally,
 # these three are mutually exclusive
