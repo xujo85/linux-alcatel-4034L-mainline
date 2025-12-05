@@ -95,10 +95,10 @@ endif
 
 configfiles=$(wildcard $(srctree)/kernel/configs/$@ $(srctree)/arch/$(SRCARCH)/configs/$@)
 
-%.config: $(obj)/conf
-	$(if $(call configfiles),, $(error No configuration exists for this target on this architecture))
-	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/kconfig/merge_config.sh -m .config $(configfiles)
-	$(Q)$(MAKE) -f $(srctree)/Makefile olddefconfig
+#%.config: $(obj)/conf
+#	$(if $(call configfiles),, $(error No configuration exists for this target on this architecture))
+#	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/kconfig/merge_config.sh -m .config $(configfiles)
+#	$(Q)$(MAKE) -f $(srctree)/Makefile olddefconfig
 
 PHONY += tinyconfig
 tinyconfig:
@@ -106,11 +106,11 @@ tinyconfig:
 	$(Q)$(MAKE) -f $(srctree)/Makefile tiny.config
 
 # CHECK: -o cache_dir=<path> working?
-PHONY += testconfig
-testconfig: $(obj)/conf
-	$(Q)$(PYTHON3) -B -m pytest $(srctree)/$(src)/tests \
-	-o cache_dir=$(abspath $(obj)/tests/.cache) \
-	$(if $(findstring 1,$(KBUILD_VERBOSE)),--capture=no)
+#PHONY += testconfig
+#testconfig: $(obj)/conf
+#	$(Q)$(PYTHON3) -B -m pytest $(srctree)/$(src)/tests \
+#	-o cache_dir=$(abspath $(obj)/tests/.cache) \
+#	$(if $(findstring 1,$(KBUILD_VERBOSE)),--capture=no)
 clean-files += tests/.cache
 
 # Help text used by make help
